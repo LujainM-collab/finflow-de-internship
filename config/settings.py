@@ -8,3 +8,4 @@ class PipelineConfig:
     fred_api_key: str = ""
     max_workers: int = 4
     chunk_size: int = 50
+
