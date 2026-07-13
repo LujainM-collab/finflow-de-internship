@@ -9,3 +9,4 @@ class PipelineConfig:
     max_workers: int = 4
     chunk_size: int = 50
 
+config = PipelineConfig()
