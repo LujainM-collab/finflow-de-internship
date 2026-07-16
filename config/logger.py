@@ -1,10 +1,10 @@
 import logging  
-# import Python's logging module so we can create and configure loggers
 
-#  function that returns a logger object for the given name
+#  returns logger object for the given name
 def get_logger(name):
-    # this gets/ creates a logger with the provided name
+    # gets/ creates a logger with the provided name
     logger = logging.getLogger(name)  
-    # set the logger to only handle INFO messages and above (critical errors)
+    # setting the logger to handle the "critical/important" information 
     logger.setLevel(logging.INFO)  
-    return logger  
+
+
