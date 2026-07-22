@@ -120,18 +120,29 @@ Output: I got exactly what I expected but the difference is around 3seconds whoc
 
         1. transform_chunk() 
 
-        adds two new columns, balance_drain and log_amount, to a piece of the transaction data. 
-        2.transform_sequential runs this on the whole dataset at once, in a single process, as the comparison baseline. 
-        
-        3.transform_parallel
-         
-         splits the data into chunks, runs transform_chunk on each chunk using ProcessPoolExecutor, then combines the results back together and saves them to transactions_transformed.parquet. 
-         
-        4. benchmark
-        
-         times both approaches and prints the speedup, so I can see whether parallel transformation is actually worth the extra overhead.
+        Adds two new columns, balance_drain and log_amount, to a piece of the transaction data. It also makes sure amount is float64 and is_fraud is bool, then returns the chunk. Both sequential and parallel use this same function.
 
-Chunk reasonning:
-I split the data using np.array_split(df, n_workers) instead of a fixed 500k-row chunk size. With 8 workers, the table gets divided into 8  equal chunks, and each process transforms one chunk. I chose this approach because it directly matches the process pool — one chunk per worker, simple to implement, and easy to benchmark.
+        2. transform_sequential(n_rows)
 
-The tradeoff is that chunk size grows with the size of the dataset at full PaySim scale (6.3M rows), each chunk would be around 790k rows, which uses more memory per process than smaller, fixed 500k chunks would. A fixed chunk size of 500k would give better control over memory usage and better load balancing on very large datasets, but splitting by worker count was simpler to do and aligned directly with my n_workers=8 design.
+        Reads transactions.parquet, takes the first n_rows with .head(n_rows), runs transform_chunk() on the whole dataset at once in a single process, creates the output folder if needed, and saves to transactions_transformed.parquet. This is my comparison baseline.
+
+        3. transform_parallel(n_rows, n_workers=8)
+
+        Reads transactions.parquet and takes .head(n_rows). Then it splits the data into chunks using chunk_size = len(df) // n_workers and a list comprehension: [df.iloc[i:i + chunk_size] for i in range(0, len(df), chunk_size)]. I use for loops to submit each chunk to transform_chunk() with ProcessPoolExecutor, collect the results with future.result(), combine them with pd.concat(), and save to transactions_transformed.parquet.
+
+        4. benchmark(n_rows, n_workers=4)
+
+        Times both transform_sequential(n_rows) and transform_parallel(n_rows, n_workers), calculates speedup, and prints the row count plus both runtimes. In __main__ I run it for 500_000 and 1_000_000 rows. When benchmark runs, parallel uses 4 workers (not 8), because benchmark passes n_workers=4.
+
+Chunk reasoning:
+I split the data based on n_workers (chunk_size = total rows ÷ number of workers) using iloc instead of np.array_split. I stopped using np.array_split because it was turning the dataframe into numpy arrays and breaking column access when running in parallel. With 500k rows and 4 workers in the benchmark, each chunk is about 125k rows. I chose splitting by worker count because it directly matches the process pool — one chunk per worker, simple to implement, and easy to benchmark.
+
+The tradeoff is that chunk size grows with the size of the dataset — at full PaySim scale (6.3M rows) with 8 workers, each chunk would be around 790k rows, which uses more memory per process than smaller fixed chunks would. A fixed chunk size like 500k would give better control over memory usage and load balancing on very large datasets, but splitting by worker count was simpler and matched my design more directly.
+
+Benchmark results:
+
+| Rows      | Sequential | Parallel |
+|-----------|------------|----------|
+| 500,000   | 0.67s      | 0.89s    |
+
+The parallel version was slower than the sequential one for this amount of data. After thinking about it, it makes sense because transform_chunk() only does simple calculations, so it runs very quickly even with 500,000 rows. Using ProcessPoolExecutor also takes extra time because it has to start multiple processes and split the data between them. Since the calculations were already so fast, that extra time made the parallel version slower. This shows that ProcessPoolExecutor works better for more complex tasks, but for simple calculations like these, the sequential version can actually be faster.
