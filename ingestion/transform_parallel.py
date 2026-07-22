@@ -32,7 +32,7 @@ def transform_sequential(n_rows):
     result.to_parquet(file_done)
     return result
 
-def transform_parallel(n_rows, chunk_size=500_000, n_workers=4):    # since huge dataset read the required number of rows 
+def transform_parallel(n_rows, chunk_size=500_000, n_workers=4):    
     df = pd.read_parquet(file_used).head(n_rows)
     # split data frame into smaller chunks
     # iloc slices rows using row positions 
