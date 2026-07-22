@@ -1,3 +1,6 @@
+# FinFlow Schema Diagram
+
+```mermaid
 erDiagram
     fact_transactions ||--o{ transaction_type : uses
     fact_transactions ||--o{ dim_account : sends
@@ -49,3 +52,4 @@ erDiagram
         string state
         string resolution
     }
+```
