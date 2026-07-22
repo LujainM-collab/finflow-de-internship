@@ -117,32 +117,45 @@ Output: I got exactly what I expected but the difference is around 3seconds whoc
 
 
 - Transform Parallel
+        
 
-        1. transform_chunk() 
+        1. transform_chunk()
 
-        Adds two new columns, balance_drain and log_amount, to a piece of the transaction data. It also makes sure amount is float64 and is_fraud is bool, then returns the chunk. Both sequential and parallel use this same function.
+        This function does the data transformation on a DataFrame or one chunk of the dataset. It creates two new columns:
+        balance_drain, which calculates the difference between the original balance, the new balance, and the transaction amount.
+        log_amount creates a new version of the transaction amount using a logarithm to make large values easier to work with.   
 
-        2. transform_sequential(n_rows)
+        The function also changes the data types of the amount column to float64 and the is_fraud column to a Boolean (True or False). The transformed DataFrame is returned.
 
-        Reads transactions.parquet, takes the first n_rows with .head(n_rows), runs transform_chunk() on the whole dataset at once in a single process, creates the output folder if needed, and saves to transactions_transformed.parquet. This is my comparison baseline.
+        2. transform_sequential()
 
-        3. transform_parallel(n_rows, n_workers=8)
+        Does the transformation sequentially ->  everything runs in a single process. It reads the selected number of rows from the dataset, applies transform_chunk() to the entire DataFrame, saves the transformed data to a new Parquet file, and returns the result.
 
-        Reads transactions.parquet and takes .head(n_rows). Then it splits the data into chunks using chunk_size = len(df) // n_workers and a list comprehension: [df.iloc[i:i + chunk_size] for i in range(0, len(df), chunk_size)]. I use for loops to submit each chunk to transform_chunk() with ProcessPoolExecutor, collect the results with future.result(), combine them with pd.concat(), and save to transactions_transformed.parquet.
+        3. transform_parallel()
 
-        4. benchmark(n_rows, n_workers=4)
+       performs the transformation using multiple worker processes. It first reads the selected number of rows from the dataset and splits the DataFrame into chunks using a fixed chunk size , each chunk is processed separately using ProcessPoolExecutor, with each available worker applying transform_chunk() to a chunk. When a worker finishes one chunk, it can process another available chunk. After all chunks have been transformed, they are combined into one DataFrame, saved to a new Parquet file, and returned.
 
-        Times both transform_sequential(n_rows) and transform_parallel(n_rows, n_workers), calculates speedup, and prints the row count plus both runtimes. In __main__ I run it for 500_000 and 1_000_000 rows. When benchmark runs, parallel uses 4 workers (not 8), because benchmark passes n_workers=4.
+Although my laptop supports up to 8 worker processes, I used 4 workers for the benchmark tests.
+        4. benchmark()
 
-Chunk reasoning:
-I split the data based on n_workers (chunk_size = total rows ÷ number of workers) using iloc instead of np.array_split. I stopped using np.array_split because it was turning the dataframe into numpy arrays and breaking column access when running in parallel. With 500k rows and 4 workers in the benchmark, each chunk is about 125k rows. I chose splitting by worker count because it directly matches the process pool — one chunk per worker, simple to implement, and easy to benchmark.
+        Times both approaches and prints the comparison, so I can see whether parallel transformation is actually worth it.
 
-The tradeoff is that chunk size grows with the size of the dataset — at full PaySim scale (6.3M rows) with 8 workers, each chunk would be around 790k rows, which uses more memory per process than smaller fixed chunks would. A fixed chunk size like 500k would give better control over memory usage and load balancing on very large datasets, but splitting by worker count was simpler and matched my design more directly.
+        Chunk size reasoning
 
-Benchmark results:
+        I tested two fixed chunk sizes: 500,000 rows and 1,000,000 rows. A fixed chunk size gives better control over how the dataset is divided and how much data each worker processes at one time.
 
-| Rows      | Sequential | Parallel |
-|-----------|------------|----------|
-| 500,000   | 0.67s      | 0.89s    |
+        For the full PaySim dataset of 6,362,620 rows:
 
-The parallel version was slower than the sequential one for this amount of data. After thinking about it, it makes sense because transform_chunk() only does simple calculations, so it runs very quickly even with 500,000 rows. Using ProcessPoolExecutor also takes extra time because it has to start multiple processes and split the data between them. Since the calculations were already so fast, that extra time made the parallel version slower. This shows that ProcessPoolExecutor works better for more complex tasks, but for simple calculations like these, the sequential version can actually be faster.
+        A chunk size of 500,000 creates approximately 13 chunks.
+        A chunk size of 1,000,000 creates approximately 7 chunks.
+
+        Using smaller chunks creates more tasks, which may allow the workload to be distributed more evenly between the worker processes, but, creating more chunks can also increase the overhead of submitting tasks, transferring data between processes, and combining the results.
+
+        Using larger chunks reduces the number of tasks but may provide less effective workload distribution. It can also increase the amount of memory required by each worker because each process handles a larger portion of the dataset at once.
+        
+Benchmark results: 
+
+
+ While testing on the full PaySim dataset containing 6,362,620 rows using 4 worker processes. 2 different chunsizes where tested 500,000 and 1,000,000 rows. In both cases, the sequential implementation was fatster than the parallel implementation. With a chunk size of 500,000, the sequential version completed in 2.48 seconds, while the parallel version took 4.04 seconds. With a chunk size of 1,000,000, the sequential version completed in 2.69 seconds, while the parallel version took 4.91 seconds.
+
+ The 500,000-row chunk size performed better than the 1,000,000-row chunk size in the parallel implementation. A chunk size of 500,000 created more chunks, allowing the worker processes to share the workload more effectively. With a chunk size of 1,000,000, fewer chunks were created, reducing the amount of parallel work available for the workers and leading to slower execution. However, in both experiments the parallel version remained slower than the sequential version because the transformations were simple, and the overhead of creating worker processes, transferring data between processes, and combining the results outweighed the benefits of parallel execution.
